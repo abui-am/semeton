@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import OpenAI from "openai";
 import type {
   ChatCompletionMessageParam,
@@ -6,6 +8,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { computeRoute, type TravelMode } from "@/lib/google-routes/client";
+import { geocodePlace, getWeather } from "@/lib/weather/client";
 
 function isFunctionToolCall(
   tc: ChatCompletionMessageToolCall,
@@ -15,7 +18,7 @@ function isFunctionToolCall(
 
 const MAX_MESSAGES = 32;
 const MAX_CONTENT_LENGTH = 12_000;
-const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOL_ROUNDS = 6;
 
 type ClientMessage = {
   role: "user" | "assistant";
@@ -37,6 +40,22 @@ function sanitizeMessages(raw: unknown): ClientMessage[] {
   return out;
 }
 
+// --- Plan guide loading (module-level cache, read once per cold start) ---
+let _planGuide: string | null = null;
+
+function getPlanGuide(): string {
+  if (_planGuide !== null) return _planGuide;
+  try {
+    const raw = readFileSync(join(process.cwd(), "docs/plan-guide.md"), "utf-8");
+    // Strip reference markers like 【47†L537-L545】 that clutter the context
+    _planGuide = raw.replace(/【[^\]]*】/g, "").trim();
+  } catch {
+    _planGuide = "";
+  }
+  return _planGuide;
+}
+
+// --- Tools ---
 const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
@@ -68,9 +87,29 @@ const TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_weather",
+      description:
+        "Get current weather conditions for one or more places in Bali. Call whenever the user asks about weather, packing advice, rain, temperature, or best season for a specific upcoming visit. Returns live temperature, conditions, humidity, and precipitation probability.",
+      parameters: {
+        type: "object",
+        properties: {
+          places: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              'Place names to check, e.g. ["Ubud, Bali", "Seminyak, Bali"]. Limit to the most relevant stops.',
+          },
+        },
+        required: ["places"],
+      },
+    },
+  },
 ];
 
-const SYSTEM_PROMPT = `You are Semeton, an expert Bali travel and itinerary planner.
+const BASE_SYSTEM_PROMPT = `You are Semeton, an expert Bali travel and itinerary planner.
 
 Your job is to help travellers plan the perfect Bali trip — from one-day excursions to multi-week adventures. You know Bali's regions deeply: Seminyak, Canggu, Ubud, Nusa Dua, Uluwatu, Amed, Lovina, Sidemen, Munduk, and more.
 
@@ -101,12 +140,103 @@ Rules for the Google Maps link:
 ---
 [One or two sentences inviting the user to customise.]
 
+## Weather
+
+When the user asks about weather, packing, rain, or temperature for any place in Bali:
+1. Call get_weather with the relevant place name(s).
+2. Report the live conditions clearly in prose (temperature, description, rain chance).
+3. After your prose, emit EXACTLY one semeton-weather block listing those place names (one per line):
+
+\`\`\`semeton-weather
+Ubud, Bali
+Seminyak, Bali
+\`\`\`
+
+Rules for the semeton-weather block:
+- List ONLY place names — no numbers, temperatures, or weather data inside the block. The client fetches live data itself.
+- Emit at most ONE block per response.
+- For itinerary responses: you may include ONE block after the final day's maps link, listing the key destination(s) for that trip.
+- Do NOT emit the block if the user is asking a general/seasonal question where live data isn't meaningful.
+
 ## Other guidelines
 - Suggest the best time of day for each place (e.g. sunrise at Tegalalang, sunset at Uluwatu).
 - Group nearby attractions to minimise backtracking.
 - Prefer scooter (TWO_WHEELER) for short intra-region trips; car (DRIVE) for longer journeys or families.
 - If the traveller doesn't specify transport, assume DRIVE.
-- For non-itinerary answers (single questions, tips, etc.) use plain prose or a simple bullet list — do NOT force the itinerary pattern.`;
+- For non-itinerary answers (single questions, tips, etc.) use plain prose or a simple bullet list — do NOT force the itinerary pattern.
+- Use the destination reference below for seasonal norms, regional character, traffic, safety, and local tips. For current weather and travel times, always use the live tools.`;
+
+function buildSystemPrompt(): string {
+  const guide = getPlanGuide();
+  if (!guide) return BASE_SYSTEM_PROMPT;
+  return (
+    BASE_SYSTEM_PROMPT +
+    `\n\n## Destination reference (internal)\n\nThe following is a curated reference about Bali's regions. Use it for seasonal context, traffic patterns, local tips, and safety — not for live data.\n\n${guide}`
+  );
+}
+
+// --- Tool call handlers ---
+async function handleTravelTime(
+  tc: ChatCompletionMessageFunctionToolCall,
+): Promise<string> {
+  let args: { origin?: string; destination?: string; travel_mode?: string };
+  try {
+    args = JSON.parse(tc.function.arguments) as typeof args;
+  } catch {
+    return JSON.stringify({ error: "Could not parse tool arguments." });
+  }
+
+  const { origin, destination, travel_mode } = args;
+  if (!origin || !destination) {
+    return JSON.stringify({ error: "origin and destination are required." });
+  }
+
+  try {
+    const result = await computeRoute(
+      origin,
+      destination,
+      (travel_mode as TravelMode | undefined) ?? "DRIVE",
+    );
+    return JSON.stringify(result);
+  } catch (err) {
+    return JSON.stringify({
+      error: err instanceof Error ? err.message : "Route lookup failed.",
+    });
+  }
+}
+
+async function handleGetWeather(
+  tc: ChatCompletionMessageFunctionToolCall,
+): Promise<string> {
+  let args: { places?: string[] };
+  try {
+    args = JSON.parse(tc.function.arguments) as typeof args;
+  } catch {
+    return JSON.stringify({ error: "Could not parse tool arguments." });
+  }
+
+  const places = (args.places ?? []).slice(0, 5).filter(Boolean);
+  if (places.length === 0) {
+    return JSON.stringify({ error: "places array is required and must not be empty." });
+  }
+
+  const results = await Promise.all(
+    places.map(async (name) => {
+      try {
+        const { lat, lon, label } = await geocodePlace(name);
+        const current = await getWeather(lat, lon);
+        return { name: label, lat, lon, current };
+      } catch (err) {
+        return {
+          name,
+          error: err instanceof Error ? err.message : "Weather lookup failed.",
+        };
+      }
+    }),
+  );
+
+  return JSON.stringify({ weather: results });
+}
 
 export async function POST(request: Request) {
   const openaiKey = process.env.OPENAI_API_KEY;
@@ -137,7 +267,7 @@ export async function POST(request: Request) {
   const openai = new OpenAI({ apiKey: openaiKey });
 
   const messages: ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: buildSystemPrompt() },
     ...clientMessages,
   ];
 
@@ -153,7 +283,6 @@ export async function POST(request: Request) {
 
     const choice = response.choices[0];
     if (!choice) break;
-
     if (choice.finish_reason !== "tool_calls") break;
 
     const assistantMsg = choice.message;
@@ -163,7 +292,7 @@ export async function POST(request: Request) {
 
     await Promise.all(
       toolCalls.map(async (tc) => {
-        if (!isFunctionToolCall(tc) || tc.function.name !== "get_travel_time") {
+        if (!isFunctionToolCall(tc)) {
           messages.push({
             role: "tool",
             tool_call_id: tc.id,
@@ -172,54 +301,16 @@ export async function POST(request: Request) {
           return;
         }
 
-        let args: {
-          origin?: string;
-          destination?: string;
-          travel_mode?: string;
-        };
-        try {
-          args = JSON.parse(tc.function.arguments) as typeof args;
-        } catch {
-          messages.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: JSON.stringify({ error: "Could not parse tool arguments." }),
-          });
-          return;
+        let content: string;
+        if (tc.function.name === "get_travel_time") {
+          content = await handleTravelTime(tc);
+        } else if (tc.function.name === "get_weather") {
+          content = await handleGetWeather(tc);
+        } else {
+          content = JSON.stringify({ error: `Unknown tool: ${tc.function.name}` });
         }
 
-        const { origin, destination, travel_mode } = args;
-        if (!origin || !destination) {
-          messages.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: JSON.stringify({
-              error: "origin and destination are required.",
-            }),
-          });
-          return;
-        }
-
-        try {
-          const result = await computeRoute(
-            origin,
-            destination,
-            (travel_mode as TravelMode | undefined) ?? "DRIVE",
-          );
-          messages.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: JSON.stringify(result),
-          });
-        } catch (err) {
-          messages.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: JSON.stringify({
-              error: err instanceof Error ? err.message : "Route lookup failed.",
-            }),
-          });
-        }
+        messages.push({ role: "tool", tool_call_id: tc.id, content });
       }),
     );
   }

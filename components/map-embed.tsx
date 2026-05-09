@@ -1,5 +1,7 @@
 "use client";
 
+import { WeatherStrip } from "@/components/weather-strip";
+
 interface MapEmbedProps {
   href: string;
   children: React.ReactNode;
@@ -61,6 +63,9 @@ export function MapEmbed({ href, children }: MapEmbedProps) {
       </a>
       {embedUrl && (
         <span className="mt-2 block overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-700">
+          <span className="block border-b border-zinc-200 px-1 dark:border-zinc-700">
+            <WeatherStrip places={stops} />
+          </span>
           <iframe
             src={embedUrl}
             width="100%"

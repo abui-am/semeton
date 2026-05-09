@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import { MapEmbed } from "@/components/map-embed";
+import { WeatherStrip } from "@/components/weather-strip";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -220,11 +221,25 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
                       </a>
                     );
                   },
-                  code: ({ children }) => (
-                    <code className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-xs dark:bg-zinc-700">
-                      {children}
-                    </code>
-                  ),
+                  // Transparent wrapper so custom code blocks render without a <pre>
+                  pre: ({ children }) => <>{children}</>,
+                  code: ({ children, className }) => {
+                    const lang = /language-(\S+)/.exec(className ?? "")?.[1];
+                    if (lang === "semeton-weather") {
+                      const places = String(children)
+                        .split("\n")
+                        .map((l) => l.trim())
+                        .filter(Boolean);
+                      return places.length > 0 ? (
+                        <WeatherStrip places={places} />
+                      ) : null;
+                    }
+                    return (
+                      <code className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-xs dark:bg-zinc-700">
+                        {children}
+                      </code>
+                    );
+                  },
                 }}
               >
                 {m.content}
