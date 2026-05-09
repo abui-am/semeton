@@ -59,7 +59,7 @@ export function MapEmbed({ href, children }: MapEmbedProps) {
         {children}
       </a>
       {embedUrl && (
-        <span className="border-border mt-2 block overflow-hidden rounded-2xl border shadow-[0_12px_36px_-8px_rgba(0,0,0,0.5)]">
+        <span className="border-border mt-2 block overflow-hidden rounded-2xl border shadow-[0_8px_24px_-6px_rgba(31,27,22,0.10)]">
           <span className="border-border bg-canvas block border-b px-1">
             <WeatherStrip places={stops} />
           </span>

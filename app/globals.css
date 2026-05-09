@@ -1,15 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  /* ── tmp-claude dark palette ── */
-  --color-canvas:    #17120D;   /* deep warm near-black */
-  --color-card:      #1F1A14;   /* slightly lifted surface */
-  --color-ink:       #EDE5D8;   /* warm cream — light text */
-  --color-muted:     #9C9086;   /* warm medium-gray */
-  --color-accent:    #E8642A;   /* tmp-claude coral, unchanged */
-  --color-border:    #2D2619;   /* dark warm border */
-  --color-highlight: #291D11;   /* dark warm selected-chip bg */
-  --color-inverse:   #FFF4E6;   /* cream — text ON coral buttons */
+  /* ── tmp-claude light palette ── */
+  --color-canvas:    #FAF7F2;   /* warm cream page bg */
+  --color-card:      #FFFFFF;   /* elevated surfaces, cards */
+  --color-ink:       #1F1B16;   /* primary text */
+  --color-muted:     #6B6258;   /* secondary / placeholder text */
+  --color-accent:    #E8642A;   /* coral — CTAs, links, avatar dot */
+  --color-border:    #E8DFD3;   /* subtle warm borders */
+  --color-highlight: #FFF4E6;   /* selected chip bg, hover bg */
+  --color-inverse:   #FAF7F2;   /* text ON coral buttons or dark surfaces */
   --background: var(--color-canvas);
   --foreground: var(--color-ink);
 }
@@ -17,14 +17,14 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-canvas:    #17120D;
-  --color-card:      #1F1A14;
-  --color-ink:       #EDE5D8;
-  --color-muted:     #9C9086;
+  --color-canvas:    #FAF7F2;
+  --color-card:      #FFFFFF;
+  --color-ink:       #1F1B16;
+  --color-muted:     #6B6258;
   --color-accent:    #E8642A;
-  --color-border:    #2D2619;
-  --color-highlight: #291D11;
-  --color-inverse:   #FFF4E6;
+  --color-border:    #E8DFD3;
+  --color-highlight: #FFF4E6;
+  --color-inverse:   #FAF7F2;
 
   --font-sans:    var(--font-inter);
   --font-mono:    var(--font-geist-mono);
@@ -45,7 +45,17 @@ body {
   color: var(--color-ink);
   font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   overflow-x: hidden;
-  -webkit-tap-highlight-color: rgba(232, 100, 42, 0.15);
+  -webkit-tap-highlight-color: rgba(232, 100, 42, 0.12);
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0px); }
+  30%            { opacity: 1;    transform: translateY(-4px); }
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }
 
 @utility pb-safe {

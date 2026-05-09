@@ -13,7 +13,7 @@ function ContourOrnament() {
       viewBox="0 0 520 520"
       aria-hidden
     >
-      <g fill="none" stroke="#3A2E20" strokeWidth={1.2}>
+      <g fill="none" stroke="#D8C9AC" strokeWidth={1.2}>
         {Array.from({ length: 14 }).map((_, i) => (
           <circle
             key={i}

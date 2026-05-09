@@ -1,16 +1,25 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import { MapEmbed } from "@/components/map-embed";
 import { WeatherStrip } from "@/components/weather-strip";
 
+// ─── types ───────────────────────────────────────────────────────────────────
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  /** When set, POST /api/chat uses this instead of `content` (hidden from the UI). */
+  /** When set, POST /api/chat uses this instead of `content`. */
   apiContent?: string;
 }
 
@@ -22,45 +31,122 @@ function newMessage(
   return { id: crypto.randomUUID(), role, content, ...options };
 }
 
-/** Strip transient ids; use `apiContent` for the wire format when present. */
-function toApiMessages(history: ChatMessage[]): { role: "user" | "assistant"; content: string }[] {
+function toApiMessages(
+  history: ChatMessage[],
+): { role: "user" | "assistant"; content: string }[] {
   return history.map(({ role, content, apiContent }) => ({
     role,
     content: apiContent ?? content,
   }));
 }
 
+// ─── prompt chips (empty state) ──────────────────────────────────────────────
+
+const PROMPT_CHIPS = [
+  { label: "3-day Ubud itinerary", emoji: "🗺️" },
+  { label: "Best beach clubs in Canggu", emoji: "🏖️" },
+  { label: "Canggu → Uluwatu drive time", emoji: "🛵" },
+  { label: "Rainy day plans in Bali", emoji: "🌧️" },
+] as const;
+
+// ─── sub-components ──────────────────────────────────────────────────────────
+
+/** Animated three-dot typing indicator. */
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-1.5 px-1 py-1">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="bg-muted h-2 w-2 rounded-full"
+          style={{
+            animation: `typing-dot 1.2s ease-in-out ${i * 0.18}s infinite`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** SVG arrow-up icon for the send button. */
+function ArrowUpIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  );
+}
+
+/** SVG chevron-down for scroll FAB. */
+function ChevronDownIcon() {
+  return (
+    <svg
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+// ─── markdown renderer ───────────────────────────────────────────────────────
+
 function createMarkdownComponents(deferRichMedia: boolean): Components {
   const linkClass =
-    "inline-flex items-center gap-1 font-medium text-accent underline underline-offset-2 hover:brightness-[0.92] break-words";
+    "inline-flex items-center gap-1 font-medium text-accent underline underline-offset-2 hover:brightness-110 break-words";
 
   return {
     h1: ({ children }) => (
-      <h1 className="font-display text-ink mb-1 mt-3 text-base font-bold wrap-break-word first:mt-0">
+      <h1 className="font-display text-ink mb-2 mt-4 text-base font-bold first:mt-0">
         {children}
       </h1>
     ),
     h2: ({ children }) => (
-      <h2 className="font-display text-ink mb-1 mt-3 text-sm font-bold wrap-break-word first:mt-0">
+      <h2 className="font-display text-ink mb-1.5 mt-3 text-sm font-bold first:mt-0">
         {children}
       </h2>
     ),
     h3: ({ children }) => (
-      <h3 className="text-ink mb-0.5 mt-2 text-sm font-semibold first:mt-0">{children}</h3>
+      <h3 className="text-ink mb-1 mt-2.5 text-sm font-semibold first:mt-0">
+        {children}
+      </h3>
     ),
     p: ({ children }) => (
-      <p className="text-ink mb-1.5 last:mb-0 wrap-break-word">{children}</p>
+      <p className="text-ink mb-2.5 leading-[1.75] last:mb-0">{children}</p>
     ),
     ul: ({ children }) => (
-      <ul className="text-ink mb-1.5 ml-4 list-disc space-y-0.5 last:mb-0 wrap-break-word">{children}</ul>
+      <ul className="text-ink mb-2.5 ml-4 list-disc space-y-1.5 last:mb-0">
+        {children}
+      </ul>
     ),
     ol: ({ children }) => (
-      <ol className="text-ink mb-1.5 ml-4 list-decimal space-y-0.5 last:mb-0 wrap-break-word">{children}</ol>
+      <ol className="text-ink mb-2.5 ml-4 list-decimal space-y-1.5 last:mb-0">
+        {children}
+      </ol>
     ),
-    li: ({ children }) => <li>{children}</li>,
-    strong: ({ children }) => <strong className="text-ink font-semibold">{children}</strong>,
+    li: ({ children }) => <li className="leading-[1.7]">{children}</li>,
+    strong: ({ children }) => (
+      <strong className="text-ink font-semibold">{children}</strong>
+    ),
     em: ({ children }) => <em className="italic">{children}</em>,
-    hr: () => <hr className="border-border my-2" />,
+    hr: () => <hr className="border-border my-3" />,
     a: ({ href, children }) => {
       const isMapsDir =
         typeof href === "string" && href.includes("google.com/maps/dir/");
@@ -84,16 +170,16 @@ function createMarkdownComponents(deferRichMedia: boolean): Components {
         if (places.length === 0) return null;
         if (deferRichMedia) {
           return (
-            <span className="border-border bg-highlight text-muted my-1 block rounded-xl border border-dashed px-2 py-1.5 text-xs">
-              Weather for {places.length} stop{places.length === 1 ? "" : "s"} loads when the reply
-              finishes…
+            <span className="border-border bg-highlight text-muted my-1.5 block rounded-xl border border-dashed px-3 py-2 text-xs">
+              Fetching weather for {places.length} stop
+              {places.length === 1 ? "" : "s"}…
             </span>
           );
         }
         return <WeatherStrip places={places} />;
       }
       return (
-        <code className="bg-highlight text-ink rounded px-1 py-0.5 font-mono text-xs wrap-break-word">
+        <code className="bg-highlight text-ink rounded px-1.5 py-0.5 font-mono text-xs">
           {children}
         </code>
       );
@@ -104,31 +190,37 @@ function createMarkdownComponents(deferRichMedia: boolean): Components {
 const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   deferRichMedia,
+  isStreaming,
 }: {
   content: string;
   deferRichMedia: boolean;
+  isStreaming: boolean;
 }) {
   const components = useMemo(
     () => createMarkdownComponents(deferRichMedia),
     [deferRichMedia],
   );
-  return <Markdown components={components}>{content}</Markdown>;
+  return (
+    <span className="block">
+      <Markdown components={components}>{content}</Markdown>
+      {isStreaming && (
+        <span
+          className="bg-accent ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[0.1em] rounded-full align-middle opacity-80"
+          style={{ animation: "blink-cursor 0.9s step-end infinite" }}
+          aria-hidden
+        />
+      )}
+    </span>
+  );
 });
 
+// ─── main component ──────────────────────────────────────────────────────────
+
 export interface ChatPanelProps {
-  /**
-   * Shown as first user bubble; assistant reply streams once on mount.
-   * Prefer over `autoTrigger`; both are supported for compatibility.
-   */
   seedUserMessage?: string;
-  /**
-   * Sent to `/api/chat` for the seeded turn only; omit to use `seedUserMessage` for both.
-   * Lets the bubble stay user-friendly while the model still gets tool/format instructions.
-   */
   seedApiMessage?: string;
   /** @deprecated use `seedUserMessage` */
   autoTrigger?: string;
-  /** Resets onboarding from the planner (caller remounts with new key). */
   onStartOver?: () => void;
 }
 
@@ -142,30 +234,60 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
+
   const listRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoTriggered = useRef(false);
 
   const seedDisplay = seedUserMessage ?? autoTrigger;
 
-  const scrollToBottom = useCallback(() => {
+  // ── scroll helpers ──────────────────────────────────────────────────────────
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = listRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
+  /** Track whether the user is near the bottom. */
+  const handleScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+  }, []);
+
+  /** Scroll to bottom after new messages; skip if user has scrolled up. */
   const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
     const streaming = isSending && messages.at(-1)?.role === "assistant";
-    const delay = streaming ? 120 : 0;
-    scrollDebounceRef.current = setTimeout(() => {
-      scrollDebounceRef.current = null;
-      scrollToBottom();
-    }, delay);
+    if (!atBottom && !streaming) return; // don't interrupt manual scrolling
+    const delay = streaming ? 100 : 0;
+    scrollDebounceRef.current = setTimeout(
+      () => scrollToBottom(streaming ? "smooth" : "instant" as ScrollBehavior),
+      delay,
+    );
     return () => {
       if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
     };
-  }, [messages, isSending, scrollToBottom]);
+  }, [messages, isSending, atBottom, scrollToBottom]);
+
+  // ── textarea auto-grow ──────────────────────────────────────────────────────
+
+  function resizeTextarea() {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, window.innerHeight * 0.28) + "px";
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    resizeTextarea();
+  }
+
+  // ── streaming ───────────────────────────────────────────────────────────────
 
   const streamReply = useCallback(async (history: ChatMessage[]) => {
     setIsSending(true);
@@ -182,7 +304,9 @@ export function ChatPanel({
       });
 
       if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        const data = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
         throw new Error(data?.error ?? res.statusText);
       }
 
@@ -224,10 +348,13 @@ export function ChatPanel({
     void streamReply([firstUser]);
   }, [seedDisplay, seedApiMessage, streamReply]);
 
-  async function sendMessage() {
-    const trimmed = input.trim();
+  // ── send ────────────────────────────────────────────────────────────────────
+
+  async function sendMessage(text?: string) {
+    const trimmed = (text ?? input).trim();
     if (!trimmed || isSending) return;
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
     const userMessage = newMessage("user", trimmed);
     const history = [...messages, userMessage];
     setMessages(history);
@@ -246,116 +373,187 @@ export function ChatPanel({
     }
   }
 
+  // ── derived ─────────────────────────────────────────────────────────────────
+
   const lastIndex = messages.length - 1;
   const streamingAssistantBubble =
     isSending && lastIndex >= 0 && messages[lastIndex]?.role === "assistant";
+  const isEmpty = messages.length === 0 && !seedDisplay;
+  const canSend = input.trim().length > 0 && !isSending;
+
+  // ── render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="border-border bg-card flex min-h-0 flex-1 flex-col border-x-0 border-t border-b shadow-none sm:min-h-[70vh] sm:rounded-2xl sm:border sm:shadow-[0_12px_48px_-8px_rgba(0,0,0,0.55)] md:rounded-2xl">
-      <header className="border-border relative flex shrink-0 flex-wrap items-start justify-between gap-2 border-b px-4 py-3 sm:items-center sm:gap-3">
-        <div className="min-w-0 pr-6 sm:pr-0">
-          <p className="text-muted mb-1 hidden text-[0.65rem] font-semibold tracking-[0.2em] uppercase sm:block">
-            Plan · Navigate · Feel better
-          </p>
-          <h1 className="font-display text-ink truncate text-[0.95rem] font-semibold sm:text-base">
-            Bali itinerary planner
+    <div className="border-border bg-card relative flex min-h-0 flex-1 flex-col border-x-0 border-t border-b sm:rounded-2xl sm:border sm:shadow-[0_8px_48px_-8px_rgba(31,27,22,0.13)]">
+
+      {/* ── Header ── */}
+      <header className="border-border relative flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
+        <div className="flex min-w-0 flex-col">
+          <h1 className="font-display text-ink text-[1rem] leading-tight font-semibold tracking-tight sm:text-[1.05rem]">
+            Bali planner
           </h1>
-          <p className="text-muted mt-0.5 hidden text-xs sm:block">
-            Live travel times · maps · weather when you need them
+          <p className="text-muted mt-0.5 text-[0.65rem] font-medium tracking-[0.18em] uppercase">
+            Live routes · weather · maps
           </p>
         </div>
-        {onStartOver ? (
+        {onStartOver && (
           <button
             type="button"
             onClick={onStartOver}
-            className="border-border text-ink hover:bg-highlight absolute top-3 right-3 flex min-h-10 min-w-10 items-center justify-center rounded-full border px-3 py-2 text-[11px] font-medium sm:relative sm:top-auto sm:right-auto sm:min-h-9 sm:self-center sm:text-xs"
+            className="border-border text-muted hover:text-ink hover:bg-highlight flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition sm:text-xs"
           >
-            Start over
+            <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden>
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+            New trip
           </button>
-        ) : null}
+        )}
       </header>
 
+      {/* ── Messages ── */}
       <div
         ref={listRef}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4 [-webkit-overflow-scrolling:touch]"
+        onScroll={handleScroll}
+        className="bg-canvas flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-6 [-webkit-overflow-scrolling:touch]"
         aria-live="polite"
       >
-        {messages.length === 0 && !seedDisplay && (
-          <div className="text-muted flex flex-col gap-2 text-center text-base sm:text-sm">
-            <p className="text-ink font-medium">Plan your perfect Bali trip</p>
-            <p className="px-2">
-              Try:{" "}
-              <em className="text-muted not-italic">
-                &quot;Plan a 3-day itinerary from Seminyak through Ubud to Uluwatu&quot;
-              </em>
-            </p>
-            <p className="px-2">
-              Or:{" "}
-              <em className="text-muted not-italic">
-                &quot;Driving time from Canggu to Tegalalang?&quot;
-              </em>
-            </p>
+
+        {/* Empty state — prompt chips */}
+        {isEmpty && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-6 py-8 text-center">
+            <div>
+              <p className="font-display text-ink mb-1 text-lg font-semibold sm:text-xl">
+                Plan your Bali trip
+              </p>
+              <p className="text-muted text-sm">
+                Ask anything — routes, vibes, hidden spots
+              </p>
+            </div>
+            <div className="grid w-full max-w-sm grid-cols-2 gap-2">
+              {PROMPT_CHIPS.map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => void sendMessage(chip.label)}
+                  className="border-border bg-canvas hover:bg-highlight text-ink active:bg-highlight flex items-start gap-2 rounded-xl border px-3 py-2.5 text-left text-xs font-medium transition"
+                >
+                  <span className="mt-px shrink-0 text-base leading-none">
+                    {chip.emoji}
+                  </span>
+                  <span className="leading-snug">{chip.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
-        {messages.map((m, i) => {
-          const deferRichMedia =
-            m.role === "assistant" && streamingAssistantBubble && i === lastIndex;
-          return (
-            <div
-              key={m.id}
-              className={`wrap-break-word max-w-[min(92%,520px)] rounded-2xl px-3 py-2.5 text-base leading-snug sm:max-w-[85%] sm:py-2 sm:text-sm ${
-                m.role === "user"
-                  ? "bg-accent text-inverse self-end shadow-[0_4px_14px_-6px_rgba(209,125,86,0.65)]"
-                  : "border-border bg-canvas max-w-none border text-ink self-start sm:max-w-[85%]"
-              }`}
-            >
-              {m.role === "user" ? (
-                <span className="whitespace-pre-wrap">{m.content}</span>
-              ) : m.content ? (
-                <AssistantMarkdown content={m.content} deferRichMedia={deferRichMedia} />
-              ) : isSending ? (
-                <span className="text-muted animate-pulse">…</span>
-              ) : null}
-            </div>
-          );
-        })}
+
+        {/* Messages */}
+        <div className="flex flex-col gap-7">
+          {messages.map((m, i) => {
+            const isLast = i === lastIndex;
+            const isStreamingThis = streamingAssistantBubble && isLast;
+            const deferRichMedia = m.role === "assistant" && isStreamingThis;
+
+            if (m.role === "user") {
+              return (
+                <div key={m.id} className="flex justify-end">
+                  <div className="bg-ink text-inverse max-w-[78%] rounded-2xl rounded-br-sm px-4 py-3 text-sm leading-[1.75] shadow-[0_2px_10px_-4px_rgba(31,27,22,0.18)] sm:max-w-[72%]">
+                    <span className="whitespace-pre-wrap">{m.content}</span>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div key={m.id} className="flex items-start gap-3">
+                {/* Avatar dot */}
+                <div className="bg-accent mt-[0.45rem] h-2 w-2 shrink-0 rounded-full opacity-75" />
+                <div className="min-w-0 flex-1 text-sm leading-[1.75]">
+                  {m.content ? (
+                    <AssistantMarkdown
+                      content={m.content}
+                      deferRichMedia={deferRichMedia}
+                      isStreaming={isStreamingThis}
+                    />
+                  ) : isSending && isLast ? (
+                    <TypingDots />
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Bottom spacer so last message clears the composer */}
+        <div className="shrink-0 h-4" aria-hidden />
       </div>
 
+      {/* ── Scroll-to-bottom FAB ── */}
+      {!atBottom && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom("smooth")}
+          className="bg-card border-border text-muted hover:text-ink absolute bottom-[5.5rem] left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-[0_4px_16px_-4px_rgba(31,27,22,0.12)] transition sm:bottom-[4.5rem]"
+        >
+          <ChevronDownIcon />
+          Scroll down
+        </button>
+      )}
+
+      {/* ── Error ── */}
       {error && (
         <p
-          className="border-border shrink-0 border-t bg-red-950/60 px-4 py-2 text-base text-red-300 sm:text-sm"
+          className="border-border shrink-0 border-t bg-red-50 px-4 py-2.5 text-sm text-red-600"
           role="alert"
         >
           {error}
         </p>
       )}
 
+      {/* ── Composer ── */}
       <form
         onSubmit={handleSubmit}
-        className="border-border bg-card sticky bottom-0 z-10 flex shrink-0 gap-2 border-t pb-safe pt-3 pr-3 pl-3 sm:static sm:pb-3 sm:pl-4"
+        className="border-border bg-card/95 relative flex shrink-0 items-end gap-2 border-t px-3 pb-safe pt-3 shadow-[0_-8px_24px_-4px_rgba(31,27,22,0.06)] backdrop-blur-sm sm:px-4"
       >
         <label htmlFor="chat-input" className="sr-only">
           Message
         </label>
         <textarea
+          ref={textareaRef}
           id="chat-input"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about routes, day trips…"
-          rows={2}
+          placeholder="Ask about routes, spots, timing…"
+          rows={1}
           disabled={isSending}
           enterKeyHint="send"
           autoComplete="off"
           autoCorrect="on"
-          className="border-border bg-card text-ink placeholder:text-muted focus:ring-accent/35 box-border max-h-[30dvh] min-h-14 flex-1 resize-none rounded-xl border px-3 py-3 text-base leading-snug outline-none focus:ring-2 disabled:opacity-45 sm:min-h-11 sm:py-2 sm:text-sm"
+          className="border-border bg-canvas text-ink placeholder:text-muted focus:border-accent/50 box-border max-h-[28dvh] min-h-[2.75rem] flex-1 resize-none rounded-xl border px-3.5 py-2.5 text-base leading-snug outline-none transition focus:ring-0 disabled:opacity-40 sm:text-sm"
         />
         <button
           type="submit"
-          disabled={isSending || !input.trim()}
-          className="bg-accent text-inverse hover:brightness-[0.95] flex min-h-14 min-w-[4.25rem] shrink-0 touch-manipulation flex-col items-center justify-center rounded-xl px-3 text-base font-semibold transition active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-11 sm:w-auto sm:self-end sm:px-4 sm:text-sm"
+          disabled={!canSend}
+          aria-label="Send"
+          className="bg-accent text-inverse hover:brightness-110 mb-0 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition active:brightness-95 disabled:opacity-35 disabled:brightness-100 sm:h-[2.75rem] sm:w-[2.75rem]"
         >
-          {isSending ? "…" : "Send"}
+          {isSending ? (
+            <span className="flex gap-0.5">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="bg-inverse/70 h-1 w-1 rounded-full"
+                  style={{
+                    animation: `typing-dot 1.2s ease-in-out ${i * 0.18}s infinite`,
+                  }}
+                />
+              ))}
+            </span>
+          ) : (
+            <ArrowUpIcon size={17} />
+          )}
         </button>
       </form>
     </div>

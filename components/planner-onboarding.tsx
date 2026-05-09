@@ -17,7 +17,7 @@ function ContourOrnament() {
       viewBox="0 0 520 520"
       aria-hidden
     >
-      <g fill="none" stroke="#3A2E20" strokeWidth={1.2}>
+      <g fill="none" stroke="#D8C9AC" strokeWidth={1.2}>
         {Array.from({ length: 14 }).map((_, i) => (
           <circle
             key={i}
@@ -114,7 +114,7 @@ export function PlannerOnboarding({ onComplete }: PlannerOnboardingProps) {
           {titles[step]}
         </h1>
 
-        <div className="bg-card border-border w-full max-w-md rounded-2xl border p-4 pb-5 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.45)] sm:p-6">
+        <div className="bg-card border-border w-full max-w-md rounded-2xl border p-4 pb-5 shadow-[0_12px_40px_-8px_rgba(31,27,22,0.10)] sm:p-6">
           {step === 0 && (
             <div className="space-y-3 sm:space-y-4">
               <div className="flex items-baseline justify-between">
