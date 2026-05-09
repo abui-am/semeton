@@ -78,7 +78,7 @@ export function PlannerOnboarding({ onComplete }: PlannerOnboardingProps) {
   const stepLabel = `${step + 1} / 3`;
 
   return (
-    <div className="font-sans relative flex min-h-dvh flex-col overflow-x-hidden overflow-y-auto bg-canvas text-ink">
+    <div className="font-sans relative flex flex-1 flex-col overflow-x-hidden overflow-y-auto bg-canvas text-ink">
       <div
         className="pointer-events-none absolute inset-0"
         aria-hidden

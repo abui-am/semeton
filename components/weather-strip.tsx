@@ -85,9 +85,9 @@ export function WeatherStrip({ places }: WeatherStripProps) {
   if (isLoading) {
     return (
       <span className="flex flex-wrap gap-2 px-1 py-2">
-        {places.map((p) => (
+        {places.map((p, i) => (
           <span
-            key={p}
+            key={`${i}:${p}`}
             className="border-border bg-highlight flex animate-pulse items-center gap-2 rounded-xl border px-3 py-1.5"
           >
             <span className="bg-border h-4 w-4 rounded-full" />
@@ -108,9 +108,9 @@ export function WeatherStrip({ places }: WeatherStripProps) {
 
   return (
     <span className="flex flex-wrap gap-2 px-1 py-2">
-      {validPlaces.map((place) => (
+      {validPlaces.map((place, i) => (
         <span
-          key={place.name}
+          key={`${i}:${place.name}`}
           className="border-border bg-card text-ink flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs"
         >
           <span className="text-base leading-none" aria-hidden>

@@ -10,6 +10,16 @@ import type {
 import { computeRoute, type TravelMode } from "@/lib/google-routes/client";
 import { geocodePlace, getWeather } from "@/lib/weather/client";
 
+/** Route handler lifetime cap (seconds). Needed for multi-round tools + long streams on hosts like Vercel. Plan tier may cap lower than this. */
+export const maxDuration = 300;
+
+function resolveOpenAITimeoutMs(): number {
+  const raw = process.env.OPENAI_TIMEOUT_MS?.trim();
+  if (!raw) return 600_000;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 10_000 ? n : 600_000;
+}
+
 function isFunctionToolCall(
   tc: ChatCompletionMessageToolCall,
 ): tc is ChatCompletionMessageFunctionToolCall {
@@ -38,6 +48,97 @@ function sanitizeMessages(raw: unknown): ClientMessage[] {
     out.push({ role, content: content.slice(0, MAX_CONTENT_LENGTH) });
   }
   return out;
+}
+
+// --- Mood ---
+
+type MoodState = {
+  energy: number;
+  vibe: number;
+  hunger: number;
+};
+
+function parseMood(raw: unknown): MoodState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { energy, vibe, hunger } = raw as Record<string, unknown>;
+  if (
+    typeof energy !== "number" ||
+    typeof vibe !== "number" ||
+    typeof hunger !== "number"
+  )
+    return null;
+  const clamp = (v: number) => Math.min(100, Math.max(0, Math.round(v)));
+  return { energy: clamp(energy), vibe: clamp(vibe), hunger: clamp(hunger) };
+}
+
+function buildMoodContext(mood: MoodState): string {
+  const energyDesc =
+    mood.energy <= 30
+      ? "low (drained) — avoid stacking strenuous stops; suggest a café break, hammock time, or rest"
+      : mood.energy <= 60
+        ? "moderate — balance active and relaxed activities"
+        : "high (energetic) — the traveller is ready for adventure";
+
+  const vibeDesc =
+    mood.vibe <= 30
+      ? "low — keep things calm and restorative; skip loud or crowded venues"
+      : mood.vibe <= 60
+        ? "neutral — mix of chill and social options works"
+        : "high (fresh, upbeat) — open to exciting, social, or novel experiences";
+
+  const hungerDesc =
+    mood.hunger <= 30
+      ? "not hungry (just eaten) — no need to rush a meal stop"
+      : mood.hunger <= 60
+        ? "peckish — a snack or light warung stop within the next 1–2 hours would be welcome"
+        : "quite hungry — prioritise a proper meal stop soon";
+
+  return `## Current traveller mood (live, updates every turn)
+
+The traveller has the following current mood values (0–100). Use them to tailor your recommendations:
+
+- Energy: ${mood.energy} — ${energyDesc}.
+- Vibe: ${mood.vibe} — ${vibeDesc}.
+- Hunger: ${mood.hunger} — ${hungerDesc}.
+
+If energy is low, prefer shorter routes and add rest points. If hunger is high, work a meal stop in early. If vibe is low, favour peaceful spots over busy nightlife.
+
+## Mood projection (REQUIRED after activity plans)
+
+Whenever your reply includes a multi-stop plan, day itinerary, or any sequence of activities the traveller would actually do:
+
+1. **Inline meters:** On EVERY bold stop line (\`**emoji time — Place**\`) and EVERY route blockquote line (\`> 🚗 ... → **Place**\`), append \`sem-mood:E/V/H\` on that SAME line (after the place name) — three integers 0–100 for cumulative projected Energy, Vibe, and Hunger after completing that stop or after finishing that drive and arriving at the destination name in the quote.
+
+2. **Summary block:** End the reply with EXACTLY ONE fenced \`semeton-mood\` block reporting the projected mood AFTER they finish the full planned sequence (must match the last inline \`sem-mood:E/V/H\` snapshot).
+
+Use the heuristics below; clamp every value to 0–100.
+
+\`\`\`semeton-mood
+energy: 45
+vibe: 85
+hunger: 70
+\`\`\`
+
+Heuristics for projecting the new mood (apply each activity's effect cumulatively, then clamp 0–100):
+
+- Beach / swim / surf / sunbathe: vibe +15, energy −20, hunger +15.
+- Long drive (>45 min) or hike: energy −25, hunger +10, vibe −5.
+- Short scooter ride (<20 min): energy −5.
+- Temple / cultural / sightseeing: vibe +10, energy −10, hunger +10.
+- Café / restaurant / proper meal: hunger drops to ~15, energy +10, vibe +5.
+- Snack / warung quick bite: hunger −25, energy +5.
+- Spa / yoga / massage / rest stop: energy +20, vibe +15, hunger +5.
+- Nightlife / beach club / party: vibe +20 then −10 (net +10), energy −25, hunger +15.
+- Waterfall / nature walk: vibe +15, energy −15, hunger +10.
+- Shopping / markets: energy −10, hunger +10, vibe +5.
+
+Rules for the \`semeton-mood\` block:
+- Output ONLY the new absolute values (0–100), one per line, exactly the keys \`energy\`, \`vibe\`, \`hunger\`.
+- Place the block at the very end of your reply, AFTER any maps link or \`semeton-weather\` block.
+- Emit at most ONE \`semeton-mood\` block per reply.
+- The numbers MUST match the last inline \`sem-mood:E/V/H\` token in that itinerary (the projected mood after the final stop or leg).
+- For pure conversational replies (a single tip, a definition, a yes/no answer with no activities), do NOT emit the block or inline \`sem-mood:\` tokens.
+- Never narrate mood percentages in prose ("your energy will drop to 45..."); only inline \`sem-mood:\` tokens and the final fenced block carry numeric mood values.`;
 }
 
 // --- Plan guide loading (module-level cache, read once per cold start) ---
@@ -122,12 +223,14 @@ When presenting a multi-stop itinerary, use EXACTLY this markdown structure:
 ## Day N — [Title]
 *[Short tagline, e.g. "Beaches, temples & surf vibes"]*
 
-**[emoji] [Time] — [Place Name]**
+**[emoji] [Time] — [Place Name]** \`sem-mood:E/V/H\`
 [One sentence description. Include entry fee or dress code if relevant.]
 
-> 🚗 **[X mins]** · [Y km] → **[Next Place Name]**
+> 🚗 **[X mins]** · [Y km] → **[Next Place Name]** \`sem-mood:E/V/H\`
 
 [Repeat stop + route connector for every stop. Omit the route connector after the final stop of each day.]
+
+The inline tokens MUST use EXACTLY the format \`sem-mood:E/V/H\` where E, V, H are integers 0–100 for cumulative projected Energy / Vibe / Hunger AFTER completing that stop (first line) or AFTER completing that drive and arriving at the named place (blockquote line). The UI renders them as compact mood meters. Project cumulatively through the day using the same heuristics as the final mood block.
 
 [📍 Open Day N in Google Maps](https://www.google.com/maps/dir/Place+Name+1,+Bali/Place+Name+2,+Bali/Place+Name+3,+Bali)
 
@@ -258,9 +361,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const clientMessages = sanitizeMessages(
-    (body as { messages?: unknown })?.messages,
-  );
+  const rawBody = body as { messages?: unknown; mood?: unknown };
+
+  const clientMessages = sanitizeMessages(rawBody?.messages);
   if (clientMessages.length === 0) {
     return Response.json(
       { error: "Send a non-empty messages array." },
@@ -268,10 +371,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const openai = new OpenAI({ apiKey: openaiKey });
+  const mood = parseMood(rawBody?.mood);
+
+  const openai = new OpenAI({
+    apiKey: openaiKey,
+    timeout: resolveOpenAITimeoutMs(),
+  });
+
+  const systemMessages: ChatCompletionMessageParam[] = [
+    { role: "system", content: buildSystemPrompt() },
+    ...(mood
+      ? [{ role: "system" as const, content: buildMoodContext(mood) }]
+      : []),
+  ];
 
   const messages: ChatCompletionMessageParam[] = [
-    { role: "system", content: buildSystemPrompt() },
+    ...systemMessages,
     ...clientMessages,
   ];
 

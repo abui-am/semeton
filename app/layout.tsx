@@ -43,7 +43,7 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${fraunces.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="bg-canvas text-ink flex min-h-dvh flex-col overscroll-y-contain font-sans">
+      <body className="bg-canvas text-ink flex h-dvh flex-col overflow-hidden font-sans">
         {children}
       </body>
     </html>

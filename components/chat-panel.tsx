@@ -13,7 +13,225 @@ import Markdown from "react-markdown";
 import { MapEmbed } from "@/components/map-embed";
 import { WeatherStrip } from "@/components/weather-strip";
 
-// ─── types ───────────────────────────────────────────────────────────────────
+// ─── mood ────────────────────────────────────────────────────────────────────
+
+interface MoodState {
+  energy: number;  // 0–100 physical energy (low = tired)
+  vibe: number;    // 0–100 emotional freshness
+  hunger: number;  // 0–100 hunger level
+}
+
+const DEFAULT_MOOD: MoodState = { energy: 80, vibe: 70, hunger: 30 };
+
+function clampMood(v: number) {
+  return Math.min(100, Math.max(0, Math.round(v)));
+}
+
+function energyLabel(v: number) {
+  if (v <= 30) return "Drained";
+  if (v <= 60) return "Moderate";
+  return "Energetic";
+}
+
+function vibeLabel(v: number) {
+  if (v <= 30) return "Low";
+  if (v <= 60) return "Alright";
+  return "Fresh";
+}
+
+function hungerLabel(v: number) {
+  if (v <= 30) return "Full";
+  if (v <= 60) return "Peckish";
+  return "Starving";
+}
+
+const MOOD_DIMENSIONS = [
+  { key: "energy", emoji: "⚡", label: "Energy", labelFn: energyLabel },
+  { key: "vibe",   emoji: "😊", label: "Vibe",   labelFn: vibeLabel   },
+  { key: "hunger", emoji: "🍽️", label: "Hunger", labelFn: hungerLabel },
+] as const;
+
+/** Parse a `semeton-mood` block body. Returns null if any dimension is missing/invalid. */
+function parseMoodBlock(raw: string): MoodState | null {
+  const get = (key: string) => {
+    const match = new RegExp(`${key}\\s*:\\s*(\\d{1,3})`, "i").exec(raw);
+    if (!match) return Number.NaN;
+    return parseInt(match[1] ?? "", 10);
+  };
+  const energy = get("energy");
+  const vibe = get("vibe");
+  const hunger = get("hunger");
+  if ([energy, vibe, hunger].some((n) => Number.isNaN(n))) return null;
+  return {
+    energy: clampMood(energy),
+    vibe: clampMood(vibe),
+    hunger: clampMood(hunger),
+  };
+}
+
+/** Slim, read-only mood strip displayed below the chat header. */
+function MoodStrip({ mood }: { mood: MoodState }) {
+  return (
+    <div
+      className="border-border bg-canvas flex shrink-0 items-center gap-3 border-b px-4 py-2"
+      aria-label="Current traveller mood"
+    >
+      <span className="text-muted shrink-0 text-[9px] font-semibold tracking-[0.16em] uppercase">
+        Mood
+      </span>
+      <div className="flex flex-1 items-center gap-3 sm:gap-4">
+        {MOOD_DIMENSIONS.map((dim) => {
+          const value = mood[dim.key];
+          const isLow = value <= 30;
+          const isHigh = value >= 70;
+          return (
+            <div key={dim.key} className="flex min-w-0 flex-1 items-center gap-1.5">
+              <span className="shrink-0 text-xs leading-none" aria-hidden>
+                {dim.emoji}
+              </span>
+              <div className="bg-highlight relative h-1 min-w-6 flex-1 overflow-hidden rounded-full">
+                <div
+                  className="h-full rounded-full transition-all duration-300"
+                  style={{
+                    width: `${value}%`,
+                    backgroundColor: isHigh
+                      ? "var(--color-accent)"
+                      : isLow
+                        ? "var(--color-muted)"
+                        : "var(--color-ink)",
+                    opacity: isLow ? 0.5 : 1,
+                  }}
+                />
+              </div>
+              <span className="text-muted shrink-0 text-[10px] font-medium tabular-nums">
+                {value}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Inline card rendered for a `semeton-mood` block in assistant markdown. */
+function MoodUpdateCard({ mood }: { mood: MoodState }) {
+  return (
+    <span className="border-border bg-highlight/60 my-2 block rounded-xl border px-3 py-2.5">
+      <span className="text-muted mb-2 block text-[10px] font-semibold tracking-[0.14em] uppercase">
+        Mood after this plan
+      </span>
+      <span className="flex flex-col gap-1.5">
+        {MOOD_DIMENSIONS.map((dim) => {
+          const value = mood[dim.key];
+          const isLow = value <= 30;
+          const isHigh = value >= 70;
+          return (
+            <span key={dim.key} className="flex items-center gap-2">
+              <span className="w-3 shrink-0 text-center text-xs leading-none" aria-hidden>
+                {dim.emoji}
+              </span>
+              <span className="text-ink w-12 shrink-0 text-[11px] font-medium">
+                {dim.label}
+              </span>
+              <span className="bg-card/80 relative h-1.5 flex-1 overflow-hidden rounded-full">
+                <span
+                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${value}%`,
+                    backgroundColor: isHigh
+                      ? "var(--color-accent)"
+                      : isLow
+                        ? "var(--color-muted)"
+                        : "var(--color-ink)",
+                    opacity: isLow ? 0.5 : 1,
+                  }}
+                />
+              </span>
+              <span className="text-muted w-16 shrink-0 text-right text-[10px] font-medium">
+                {dim.labelFn(value)}
+              </span>
+              <span className="text-ink w-7 shrink-0 text-right text-[11px] font-semibold tabular-nums">
+                {value}
+              </span>
+            </span>
+          );
+        })}
+      </span>
+    </span>
+  );
+}
+
+/** Compact inline meter after each itinerary line (\`sem-mood:e/v/h\`). */
+function InlineMoodMeter({
+  mood,
+  deferRichMedia,
+}: {
+  mood: MoodState;
+  deferRichMedia: boolean;
+}) {
+  if (deferRichMedia) {
+    return (
+      <span
+        className="border-border bg-highlight text-muted ml-1 inline-flex items-center rounded-full border border-dashed px-1.5 py-px align-middle text-[9px]"
+        aria-hidden
+      >
+        ⋯
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="border-border bg-highlight/80 ml-1 inline-flex max-w-[min(100%,14rem)] flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-full border px-1.5 py-0.5 align-middle"
+      title={`Energy ${mood.energy}, Vibe ${mood.vibe}, Hunger ${mood.hunger}`}
+      aria-label={`Mood snapshot: energy ${mood.energy}, vibe ${mood.vibe}, hunger ${mood.hunger}`}
+    >
+      {MOOD_DIMENSIONS.map((dim) => {
+        const value = mood[dim.key];
+        const isLow = value <= 30;
+        const isHigh = value >= 70;
+        return (
+          <span
+            key={dim.key}
+            className="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <span className="text-[10px] leading-none" aria-hidden>
+              {dim.emoji}
+            </span>
+            <span className="bg-card/90 relative h-[3px] w-7 overflow-hidden rounded-full">
+              <span
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{
+                  width: `${value}%`,
+                  backgroundColor: isHigh
+                    ? "var(--color-accent)"
+                    : isLow
+                      ? "var(--color-muted)"
+                      : "var(--color-ink)",
+                  opacity: isLow ? 0.55 : 1,
+                }}
+              />
+            </span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/** Parses \`sem-mood:12/34/56\` (three 0–100 integers). */
+const INLINE_SEM_MOOD_RE =
+  /^sem-mood:\s*(\d{1,3})\s*\/\s*(\d{1,3})\s*\/\s*(\d{1,3})$/i;
+
+function parseInlineSemMood(raw: string): MoodState | null {
+  const m = INLINE_SEM_MOOD_RE.exec(raw.trim());
+  if (!m) return null;
+  const energy = clampMood(Number(m[1]));
+  const vibe = clampMood(Number(m[2]));
+  const hunger = clampMood(Number(m[3]));
+  return { energy, vibe, hunger };
+}
 
 interface ChatMessage {
   id: string;
@@ -178,6 +396,25 @@ function createMarkdownComponents(deferRichMedia: boolean): Components {
         }
         return <WeatherStrip places={places} />;
       }
+      if (lang === "semeton-mood") {
+        if (deferRichMedia) {
+          return (
+            <span className="border-border bg-highlight text-muted my-1.5 block rounded-xl border border-dashed px-3 py-2 text-xs">
+              Projecting mood update…
+            </span>
+          );
+        }
+        const parsed = parseMoodBlock(String(children));
+        if (!parsed) return null;
+        return <MoodUpdateCard mood={parsed} />;
+      }
+      const inlineText = String(children).trim();
+      const inlineMood = parseInlineSemMood(inlineText);
+      if (inlineMood && !lang) {
+        return (
+          <InlineMoodMeter mood={inlineMood} deferRichMedia={deferRichMedia} />
+        );
+      }
       return (
         <code className="bg-highlight text-ink rounded px-1.5 py-0.5 font-mono text-xs">
           {children}
@@ -235,10 +472,13 @@ export function ChatPanel({
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [mood, setMood] = useState<MoodState>(DEFAULT_MOOD);
 
   const listRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoTriggered = useRef(false);
+  const moodRef = useRef<MoodState>(mood);
+  useEffect(() => { moodRef.current = mood; }, [mood]);
 
   const seedDisplay = seedUserMessage ?? autoTrigger;
 
@@ -300,7 +540,7 @@ export function ChatPanel({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: toApiMessages(history) }),
+        body: JSON.stringify({ messages: toApiMessages(history), mood: moodRef.current }),
       });
 
       if (!res.ok) {
@@ -328,6 +568,12 @@ export function ChatPanel({
           }
           return copy;
         });
+      }
+
+      const moodMatch = /```semeton-mood\s*\n([\s\S]*?)```/.exec(accumulated);
+      if (moodMatch?.[1]) {
+        const next = parseMoodBlock(moodMatch[1]);
+        if (next) setMood(next);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Request failed";
@@ -410,6 +656,9 @@ export function ChatPanel({
           </button>
         )}
       </header>
+
+      {/* ── Mood strip (read-only, AI-managed) ── */}
+      <MoodStrip mood={mood} />
 
       {/* ── Messages ── */}
       <div
