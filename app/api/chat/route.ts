@@ -92,7 +92,7 @@ const TOOLS: ChatCompletionTool[] = [
     function: {
       name: "get_weather",
       description:
-        "Get current weather conditions for one or more places in Bali. Call whenever the user asks about weather, packing advice, rain, temperature, or best season for a specific upcoming visit. Returns live temperature, conditions, humidity, and precipitation probability.",
+        "Get current weather conditions for one or more places in Bali. Call whenever the user asks about weather, packing advice, rain, temperature, or best season for a specific upcoming visit. Returns live temperature, conditions, humidity, and precipitation probability. IMPORTANT: do NOT call this tool more than once per assistant turn for the same place. If you already received a successful result for a place earlier in this same turn, use that result — do not request it again.",
       parameters: {
         type: "object",
         properties: {
@@ -143,9 +143,11 @@ Rules for the Google Maps link:
 ## Weather
 
 When the user asks about weather, packing, rain, or temperature for any place in Bali:
-1. Call get_weather with the relevant place name(s).
-2. Report the live conditions clearly in prose (temperature, description, rain chance).
-3. After your prose, emit EXACTLY one semeton-weather block listing those place names (one per line):
+1. Call get_weather ONCE with ALL relevant place names in a single call — never split the same places across multiple calls in the same turn.
+2. If you already received a successful get_weather result for a place earlier in this turn, use that data directly — do NOT call the tool again for that place.
+3. If the user's follow-up only references conditions you already reported in your immediately previous message and is NOT asking for a live update, answer from that prose without calling the tool again.
+4. Report the live conditions clearly in prose (temperature, description, rain chance).
+5. After your prose, emit EXACTLY one semeton-weather block listing those place names (one per line):
 
 \`\`\`semeton-weather
 Ubud, Bali
@@ -215,7 +217,9 @@ async function handleGetWeather(
     return JSON.stringify({ error: "Could not parse tool arguments." });
   }
 
-  const places = (args.places ?? []).slice(0, 5).filter(Boolean);
+  const places = [...new Set(
+    (args.places ?? []).map((p: string) => p.trim()).filter(Boolean),
+  )].slice(0, 5);
   if (places.length === 0) {
     return JSON.stringify({ error: "places array is required and must not be empty." });
   }

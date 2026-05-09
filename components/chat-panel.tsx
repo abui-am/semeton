@@ -1,14 +1,108 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import { MapEmbed } from "@/components/map-embed";
 import { WeatherStrip } from "@/components/weather-strip";
 
 interface ChatMessage {
+  id: string;
   role: "user" | "assistant";
   content: string;
 }
+
+function newMessage(role: "user" | "assistant", content: string): ChatMessage {
+  return { id: crypto.randomUUID(), role, content };
+}
+
+/** Strip transient ids before sending to the API. */
+function toApiMessages(history: ChatMessage[]): { role: "user" | "assistant"; content: string }[] {
+  return history.map(({ role, content }) => ({ role, content }));
+}
+
+function createMarkdownComponents(deferRichMedia: boolean): Components {
+  const linkClass =
+    "inline-flex items-center gap-1 font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300";
+
+  return {
+    h1: ({ children }) => (
+      <h1 className="mb-1 mt-3 text-base font-bold first:mt-0">{children}</h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="mb-1 mt-3 text-sm font-bold first:mt-0">{children}</h2>
+    ),
+    h3: ({ children }) => (
+      <h3 className="mb-0.5 mt-2 text-sm font-semibold first:mt-0">{children}</h3>
+    ),
+    p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
+    ul: ({ children }) => (
+      <ul className="mb-1.5 ml-4 list-disc space-y-0.5 last:mb-0">{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="mb-1.5 ml-4 list-decimal space-y-0.5 last:mb-0">{children}</ol>
+    ),
+    li: ({ children }) => <li>{children}</li>,
+    strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+    em: ({ children }) => <em className="italic">{children}</em>,
+    hr: () => <hr className="my-2 border-zinc-200 dark:border-zinc-700" />,
+    a: ({ href, children }) => {
+      const isMapsDir =
+        typeof href === "string" && href.includes("google.com/maps/dir/");
+      if (isMapsDir && !deferRichMedia) {
+        return <MapEmbed href={href}>{children}</MapEmbed>;
+      }
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={linkClass}
+        >
+          {children}
+        </a>
+      );
+    },
+    pre: ({ children }) => <>{children}</>,
+    code: ({ children, className }) => {
+      const lang = /language-(\S+)/.exec(className ?? "")?.[1];
+      if (lang === "semeton-weather") {
+        const places = String(children)
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+        if (places.length === 0) return null;
+        if (deferRichMedia) {
+          return (
+            <span className="my-1 block rounded-lg border border-dashed border-zinc-300 bg-zinc-100/80 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-400">
+              Weather for {places.length} stop{places.length === 1 ? "" : "s"} loads when the reply finishes…
+            </span>
+          );
+        }
+        return <WeatherStrip places={places} />;
+      }
+      return (
+        <code className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-xs dark:bg-zinc-700">
+          {children}
+        </code>
+      );
+    },
+  };
+}
+
+const AssistantMarkdown = memo(function AssistantMarkdown({
+  content,
+  deferRichMedia,
+}: {
+  content: string;
+  deferRichMedia: boolean;
+}) {
+  const components = useMemo(
+    () => createMarkdownComponents(deferRichMedia),
+    [deferRichMedia],
+  );
+  return <Markdown components={components}>{content}</Markdown>;
+});
 
 interface ChatPanelProps {
   /** If set, this message is silently sent on mount to seed the first AI response. */
@@ -29,9 +123,20 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
     el.scrollTop = el.scrollHeight;
   }, []);
 
+  const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
+    const streaming =
+      isSending && messages.at(-1)?.role === "assistant";
+    const delay = streaming ? 120 : 0;
+    scrollDebounceRef.current = setTimeout(() => {
+      scrollDebounceRef.current = null;
+      scrollToBottom();
+    }, delay);
+    return () => {
+      if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
+    };
+  }, [messages, isSending, scrollToBottom]);
 
   /** Stream an assistant reply for an arbitrary history without adding a user bubble. */
   const streamReply = useCallback(
@@ -40,13 +145,13 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
       setError(null);
 
       const placeholderIndex = history.length;
-      setMessages([...history, { role: "assistant", content: "" }]);
+      setMessages([...history, newMessage("assistant", "")]);
 
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history }),
+          body: JSON.stringify({ messages: toApiMessages(history) }),
         });
 
         if (!res.ok) {
@@ -70,7 +175,7 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
             const copy = [...prev];
             const last = copy[placeholderIndex];
             if (last?.role === "assistant") {
-              copy[placeholderIndex] = { role: "assistant", content: accumulated };
+              copy[placeholderIndex] = { ...last, content: accumulated };
             }
             return copy;
           });
@@ -89,14 +194,14 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
   useEffect(() => {
     if (!autoTrigger || autoTriggered.current) return;
     autoTriggered.current = true;
-    void streamReply([{ role: "user", content: autoTrigger }]);
+    void streamReply([newMessage("user", autoTrigger)]);
   }, [autoTrigger, streamReply]);
 
   async function sendMessage() {
     const trimmed = input.trim();
     if (!trimmed || isSending) return;
     setInput("");
-    const userMessage: ChatMessage = { role: "user", content: trimmed };
+    const userMessage = newMessage("user", trimmed);
     const history = [...messages, userMessage];
     setMessages(history);
     await streamReply(history);
@@ -113,6 +218,12 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
       void sendMessage();
     }
   }
+
+  const lastIndex = messages.length - 1;
+  const streamingAssistantBubble =
+    isSending &&
+    lastIndex >= 0 &&
+    messages[lastIndex]?.role === "assistant";
 
   return (
     <div className="flex h-full min-h-[70vh] w-full max-w-2xl flex-col rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -152,9 +263,14 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
             </p>
           </div>
         )}
-        {messages.map((m, i) => (
+        {messages.map((m, i) => {
+          const deferRichMedia =
+            m.role === "assistant" &&
+            streamingAssistantBubble &&
+            i === lastIndex;
+          return (
           <div
-            key={`${i}-${m.role}`}
+            key={m.id}
             className={`max-w-[85%] wrap-break-word rounded-2xl px-3 py-2 text-sm leading-relaxed ${
               m.role === "user"
                 ? "self-end bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
@@ -164,91 +280,16 @@ export function ChatPanel({ autoTrigger }: ChatPanelProps) {
             {m.role === "user" ? (
               m.content
             ) : m.content ? (
-              <Markdown
-                components={{
-                  h1: ({ children }) => (
-                    <h1 className="mb-1 mt-3 text-base font-bold first:mt-0">
-                      {children}
-                    </h1>
-                  ),
-                  h2: ({ children }) => (
-                    <h2 className="mb-1 mt-3 text-sm font-bold first:mt-0">
-                      {children}
-                    </h2>
-                  ),
-                  h3: ({ children }) => (
-                    <h3 className="mb-0.5 mt-2 text-sm font-semibold first:mt-0">
-                      {children}
-                    </h3>
-                  ),
-                  p: ({ children }) => (
-                    <p className="mb-1.5 last:mb-0">{children}</p>
-                  ),
-                  ul: ({ children }) => (
-                    <ul className="mb-1.5 ml-4 list-disc space-y-0.5 last:mb-0">
-                      {children}
-                    </ul>
-                  ),
-                  ol: ({ children }) => (
-                    <ol className="mb-1.5 ml-4 list-decimal space-y-0.5 last:mb-0">
-                      {children}
-                    </ol>
-                  ),
-                  li: ({ children }) => <li>{children}</li>,
-                  strong: ({ children }) => (
-                    <strong className="font-semibold">{children}</strong>
-                  ),
-                  em: ({ children }) => <em className="italic">{children}</em>,
-                  hr: () => (
-                    <hr className="my-2 border-zinc-200 dark:border-zinc-700" />
-                  ),
-                  a: ({ href, children }) => {
-                    const isMapsDir =
-                      typeof href === "string" &&
-                      href.includes("google.com/maps/dir/");
-                    if (isMapsDir)
-                      return (
-                        <MapEmbed href={href}>{children}</MapEmbed>
-                      );
-                    return (
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                      >
-                        {children}
-                      </a>
-                    );
-                  },
-                  // Transparent wrapper so custom code blocks render without a <pre>
-                  pre: ({ children }) => <>{children}</>,
-                  code: ({ children, className }) => {
-                    const lang = /language-(\S+)/.exec(className ?? "")?.[1];
-                    if (lang === "semeton-weather") {
-                      const places = String(children)
-                        .split("\n")
-                        .map((l) => l.trim())
-                        .filter(Boolean);
-                      return places.length > 0 ? (
-                        <WeatherStrip places={places} />
-                      ) : null;
-                    }
-                    return (
-                      <code className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-xs dark:bg-zinc-700">
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
-              >
-                {m.content}
-              </Markdown>
+              <AssistantMarkdown
+                content={m.content}
+                deferRichMedia={deferRichMedia}
+              />
             ) : isSending ? (
               <span className="animate-pulse">…</span>
             ) : null}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {error && (

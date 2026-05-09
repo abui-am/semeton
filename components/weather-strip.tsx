@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { WeatherResult } from "@/lib/weather/client";
 
 interface WeatherResponse {
@@ -48,29 +48,41 @@ export function WeatherStrip({ places }: WeatherStripProps) {
 
   // Use a stable string key so the effect only runs when places actually change
   const placesKey = places.join("|||");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+
     if (places.length === 0) {
       setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
-    setFetchError(null);
-    setData(null);
+    // Debounce: wait 600 ms after the last places change before fetching.
+    // This prevents a burst of partial requests while the AI streams new
+    // place names into the semeton-weather block one line at a time.
+    timerRef.current = setTimeout(() => {
+      setIsLoading(true);
+      setFetchError(null);
+      setData(null);
 
-    const params = places.map((p) => `place=${encodeURIComponent(p)}`).join("&");
+      const params = places.map((p) => `place=${encodeURIComponent(p)}`).join("&");
 
-    fetch(`/api/weather?${params}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Weather request failed (${res.status})`);
-        return res.json() as Promise<WeatherResponse>;
-      })
-      .then((json) => setData(json.places))
-      .catch((err) =>
-        setFetchError(err instanceof Error ? err.message : "Failed to load weather"),
-      )
-      .finally(() => setIsLoading(false));
+      fetch(`/api/weather?${params}`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`Weather request failed (${res.status})`);
+          return res.json() as Promise<WeatherResponse>;
+        })
+        .then((json) => setData(json.places))
+        .catch((err) =>
+          setFetchError(err instanceof Error ? err.message : "Failed to load weather"),
+        )
+        .finally(() => setIsLoading(false));
+    }, 600);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placesKey]);
 
