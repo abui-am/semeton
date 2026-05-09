@@ -32,7 +32,6 @@ function conditionEmoji(type: string, isDaytime: boolean): string {
   return CONDITION_EMOJI[type] ?? "🌡️";
 }
 
-/** Shortens "Ubud, Bali, Indonesia" → "Ubud" for compact display. */
 function shortLabel(name: string): string {
   return name.split(",")[0].trim();
 }
@@ -46,7 +45,6 @@ export function WeatherStrip({ places }: WeatherStripProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Use a stable string key so the effect only runs when places actually change
   const placesKey = places.join("|||");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -54,13 +52,9 @@ export function WeatherStrip({ places }: WeatherStripProps) {
     if (timerRef.current) clearTimeout(timerRef.current);
 
     if (places.length === 0) {
-      setIsLoading(false);
       return;
     }
 
-    // Debounce: wait 600 ms after the last places change before fetching.
-    // This prevents a burst of partial requests while the AI streams new
-    // place names into the semeton-weather block one line at a time.
     timerRef.current = setTimeout(() => {
       setIsLoading(true);
       setFetchError(null);
@@ -94,12 +88,12 @@ export function WeatherStrip({ places }: WeatherStripProps) {
         {places.map((p) => (
           <span
             key={p}
-            className="flex animate-pulse items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-100 px-3 py-1.5 dark:border-zinc-700 dark:bg-zinc-800"
+            className="border-border bg-highlight flex animate-pulse items-center gap-2 rounded-xl border px-3 py-1.5"
           >
-            <span className="h-4 w-4 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+            <span className="bg-border h-4 w-4 rounded-full" />
             <span className="flex flex-col gap-1">
-              <span className="h-2.5 w-14 rounded bg-zinc-300 dark:bg-zinc-600" />
-              <span className="h-2 w-20 rounded bg-zinc-200 dark:bg-zinc-700" />
+              <span className="bg-border h-2.5 w-14 rounded" />
+              <span className="bg-border h-2 w-20 rounded opacity-70" />
             </span>
           </span>
         ))}
@@ -107,7 +101,6 @@ export function WeatherStrip({ places }: WeatherStripProps) {
     );
   }
 
-  // Fail silently — weather is supplemental; don't break the map or message
   if (fetchError || !data) return null;
 
   const validPlaces = data.filter((p) => !p.error);
@@ -118,22 +111,20 @@ export function WeatherStrip({ places }: WeatherStripProps) {
       {validPlaces.map((place) => (
         <span
           key={place.name}
-          className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          className="border-border bg-card text-ink flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs"
         >
           <span className="text-base leading-none" aria-hidden>
             {conditionEmoji(place.current.conditionType, place.current.isDaytime)}
           </span>
           <span className="flex flex-col">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-              {shortLabel(place.name)}
-            </span>
-            <span className="text-zinc-500 dark:text-zinc-400">
+            <span className="text-ink font-semibold">{shortLabel(place.name)}</span>
+            <span className="text-muted">
               {place.current.tempC}°C · {place.current.conditionText}
             </span>
           </span>
           {place.current.precipPercent > 10 && (
             <span
-              className="text-blue-500 dark:text-blue-400"
+              className="text-accent"
               title={`${place.current.precipPercent}% chance of rain`}
             >
               💧{place.current.precipPercent}%

@@ -13,7 +13,6 @@ function parseDirectionStops(href: string): string[] {
     const url = new URL(href);
     if (!url.hostname.includes("google.com")) return [];
     const parts = url.pathname.split("/").filter(Boolean);
-    // parts = ['maps', 'dir', 'Stop+1,+Bali', 'Stop+2,+Bali', ...]
     const stopIndex = parts.indexOf("dir");
     if (stopIndex === -1) return [];
     return parts
@@ -51,25 +50,23 @@ export function MapEmbed({ href, children }: MapEmbedProps) {
   const stops = parseDirectionStops(href);
   const embedUrl = apiKey ? buildEmbedUrl(stops, apiKey) : null;
 
+  const linkClass =
+    "inline-flex items-center gap-1 font-medium text-accent underline underline-offset-2 hover:brightness-[0.92]";
+
   return (
     <span className="my-2 block">
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1 font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-      >
+      <a href={href} target="_blank" rel="noopener noreferrer" className={linkClass}>
         {children}
       </a>
       {embedUrl && (
-        <span className="mt-2 block overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-700">
-          <span className="block border-b border-zinc-200 px-1 dark:border-zinc-700">
+        <span className="border-border mt-2 block overflow-hidden rounded-2xl border shadow-[0_12px_36px_-8px_rgba(0,0,0,0.5)]">
+          <span className="border-border bg-canvas block border-b px-1">
             <WeatherStrip places={stops} />
           </span>
           <iframe
             src={embedUrl}
             width="100%"
-            height="340"
+            className="h-[min(50dvh,320px)] w-full max-w-full shrink-0 sm:h-[340px]"
             style={{ border: 0, display: "block" }}
             allowFullScreen
             loading="lazy"
